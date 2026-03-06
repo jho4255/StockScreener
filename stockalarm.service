@@ -1,0 +1,15 @@
+[Unit]
+Description=StockAlarm Screening Server
+After=network.target
+
+[Service]
+Type=simple
+User=jho4255
+WorkingDirectory=/home/jho4255/StockAlarm
+ExecStart=/home/jho4255/StockAlarm/venv/bin/python server.py
+Restart=always
+RestartSec=30
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

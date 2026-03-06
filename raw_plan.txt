@@ -1,0 +1,69 @@
+[조건 D]
+- 로그 차트 기준
+- 정규장 가격만 포함
+- understand_feargread.md 정리된 지표 기준 일봉상 공포 구간에 위치
+- 일봉상 RSI가 31이하 과매도 구간
+- 일봉상 slow stochastic (40,10,10)의 k선이 21 이하
+- s&p500, nasdaq100, 러셀2000 에 하나라도 속하는 주식
+
+[조건 M]
+- 조건 D를 만족하는 주식 중 서치
+- 정규장 가격만 포함
+- 로그 차트 기준
+- understand_feargread.md에 정리된 지표 기준 15분봉상 공포 구간에 위치
+- 15분봉상 RSI가 31이하 과매도 구간
+- 15분봉상 slow stochastic (40,10,10)의 k선이 21 이하
+
+[주요 목표]
+조건 M과 N에 해당하는 미국 주식을 각각 찾아주는 python 코드 설계 및 구현
+
+---
+
+## [상세 구현 방안]
+
+### 1. 기술 스택 및 라이브러리
+- **Language:** Python 3.x
+- **Data Source:** `yfinance` (미국 주식 시세 데이터 및 지수 구성 종목)
+- **Technical Analysis:** `pandas_ta` 또는 `ta-lib` (RSI, Stochastic 계산)
+- **Data Manipulation:** `pandas`, `numpy`
+
+### 2. 핵심 지표 구현 (understand_feargread.md 기준)
+- **FearZone (공포 구간) 로직:**
+    - `FZ1` (고점 대비 낙폭 비율): `(최근 30봉 최고가 - 현재가) / 최근 30봉 최고가`
+    - `FZ1_Limit`: `FZ1`의 50봉 이동평균 + `FZ1`의 50봉 표준편차
+    - `FZ2` (가격 이동평균): 가격의 30봉 이동평균 (WMA 권장)
+    - `FZ2_Limit`: `FZ2`의 50봉 이동평균 - `FZ2`의 50봉 표준편차
+    - **판정:** `FZ1 > FZ1_Limit` AND `FZ2 < FZ2_Limit` 일 때 FearZone 진입
+- **RSI:** Period 14 (표준), 과매도 기준 31 이하
+- **Slow Stochastic (40, 10, 10):**
+    - %K 선이 21 이하인 경우 필터링
+
+### 3. 단계별 실행 알고리즘 (Workflow)
+
+#### Step 1: 종목 풀(Universe) 구성
+- S&P 500, NASDAQ 100, Russell 2000 지수 구성 종목 리스트를 병합하여 중복 제거된 티커 리스트 생성.
+
+#### Step 2: [조건 D] 일봉 스크리닝 (Daily Filter)
+- 각 종목의 최근 일봉 데이터(1년치)를 로드.
+- 정규장 데이터만 사용하도록 처리.
+- **필터링:**
+    1. FearZone 조건 충족 여부 확인.
+    2. RSI(14) <= 31 확인.
+    3. Slow Stochastic (40, 10, 10)의 %K <= 21 확인.
+- 위 조건을 모두 만족하는 종목 리스트(`Candidates_D`) 추출.
+
+#### Step 3: [조건 M] 15분봉 스크리닝 (Intraday Filter)
+- `Candidates_D`에 포함된 종목에 대해서만 최근 15분봉 데이터(최근 60일 이내 데이터) 로드.
+- **필터링:**
+    1. 15분봉 기준 FearZone 조건 충족 여부 확인.
+    2. 15분봉 기준 RSI(14) <= 31 확인.
+    3. 15분봉 기준 Slow Stochastic %K <= 21 확인.
+- 최종 조건을 만족하는 종목 리스트(`Final_Targets`) 확정.
+
+### 4. 로그 차트 및 정규장 데이터 처리
+- **로그 차트:** 가격 차이 계산 시 로그 스케일을 적용하거나, 비율(Percentage) 기반 지표(FearZone의 FZ1 등)를 사용하여 로그 차트와 동일한 효과를 냄.
+- **정규장:** `yfinance` 다운로드 시 `proxy` 및 `prepost=False` 설정을 통해 정규장 데이터만 추출.
+
+### 5. 예상 결과물
+- 조건 D를 만족하는 종목 리스트 및 해당 지표 값 출력.
+- 조건 M을 최종 만족하는 종목 리스트 및 매수 적기 신호 리포트 생성.
