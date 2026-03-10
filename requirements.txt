@@ -1,5 +1,5 @@
 yfinance
-pandas_ta @ https://github.com/twopirllc/pandas-ta/archive/refs/heads/development.zip
+pandas_ta @ https://github.com/twopirllc/pandas-ta/archive/refs/heads/main.zip
 pandas
 numpy
 requests
