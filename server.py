@@ -148,9 +148,8 @@ def run_screening(market):
 
     # Step 2: 15-min intraday
     # Collect detailed results for reporting
-    import pandas_ta as ta
     import yfinance as yf
-    from runScreening import get_fearzone_condition, get_stoch_k
+    from runScreening import get_fearzone_condition, get_stoch_k, rsi as calc_rsi
 
     cond_m = []
     try:
@@ -167,7 +166,7 @@ def run_screening(market):
                     if df.empty or len(df) < 100:
                         continue
                     df = get_fearzone_condition(df)
-                    df["RSI"] = ta.rsi(df["Close"], length=14)
+                    df["RSI"] = calc_rsi(df["Close"], length=14)
                     df["Stoch_K"] = get_stoch_k(df)
                     if "FearZone_Con" not in df.columns:
                         continue

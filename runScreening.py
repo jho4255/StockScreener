@@ -1,6 +1,5 @@
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
 import numpy as np
 import argparse
 import requests
@@ -23,6 +22,26 @@ def manual_wma(series, length):
     result = np.full(len(vals), np.nan)
     result[length - 1:] = conv
     return pd.Series(result, index=series.index)
+
+def rsi(close, length=14):
+    """Calculate RSI (Relative Strength Index)."""
+    delta = close.diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = -delta.where(delta < 0, 0.0)
+    avg_gain = gain.ewm(alpha=1/length, min_periods=length).mean()
+    avg_loss = loss.ewm(alpha=1/length, min_periods=length).mean()
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+
+def stoch(high, low, close, k=40, smooth_k=10):
+    """Calculate Slow Stochastic %K."""
+    lowest_low = low.rolling(window=k).min()
+    highest_high = high.rolling(window=k).max()
+    raw_k = 100 * (close - lowest_low) / (highest_high - lowest_low)
+    stoch_k = raw_k.rolling(window=smooth_k).mean()
+    return stoch_k
+
 
 def get_fearzone_condition(df, high_period=30, stdev_period=50):
     # Ensure columns are simple strings
@@ -59,10 +78,7 @@ def get_stoch_k(df, k=40, smooth_k=10):
     if 'High' not in df.columns or 'Low' not in df.columns or 'Close' not in df.columns:
         return pd.Series(np.nan, index=df.index)
         
-    stoch = ta.stoch(df['High'], df['Low'], df['Close'], k=k, d=smooth_k, smooth_k=smooth_k)
-    if stoch is not None and not stoch.empty:
-        return stoch.iloc[:, 0] # STOCHk
-    return pd.Series(np.nan, index=df.index)
+    return stoch(df['High'], df['Low'], df['Close'], k=k, smooth_k=smooth_k)
 
 def get_tickers_kr():
     print("Fetching KOSPI 200 + KOSDAQ 150 tickers...")
@@ -270,11 +286,11 @@ def _screen_batch(tickers, period, interval, step_label, resample_4h=False, min_
                 if df.empty or len(df) < min_bars:
                     continue
                 # RSI pre-check: skip expensive FearZone if RSI > 31
-                rsi = ta.rsi(df['Close'], length=14)
-                if rsi.empty or pd.isna(rsi.iloc[-1]) or rsi.iloc[-1] > 31:
+                rsi_vals = rsi(df['Close'], length=14)
+                if rsi_vals.empty or pd.isna(rsi_vals.iloc[-1]) or rsi_vals.iloc[-1] > 31:
                     continue
                 df = get_fearzone_condition(df)
-                df['RSI'] = rsi
+                df['RSI'] = rsi_vals
                 df['Stoch_K'] = get_stoch_k(df)
                 if 'FearZone_Con' not in df.columns or df['FearZone_Con'].isna().all():
                     continue
