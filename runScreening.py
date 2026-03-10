@@ -14,8 +14,15 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 def manual_wma(series, length):
-    weights = np.arange(1, length + 1)
-    return series.rolling(length).apply(lambda x: np.dot(x.astype(float), weights) / weights.sum(), raw=True)
+    vals = series.values.astype(float)
+    if len(vals) < length:
+        return pd.Series(np.nan, index=series.index)
+    w = np.arange(1, length + 1, dtype=float)
+    w = w / w.sum()
+    conv = np.convolve(vals, w[::-1], mode='valid')
+    result = np.full(len(vals), np.nan)
+    result[length - 1:] = conv
+    return pd.Series(result, index=series.index)
 
 def get_fearzone_condition(df, high_period=30, stdev_period=50):
     # Ensure columns are simple strings
@@ -235,42 +242,50 @@ def _resample_to_4h(df):
 def _screen_batch(tickers, period, interval, step_label, resample_4h=False, min_bars=100):
     """Run FearZone + RSI + StochK screening on a list of tickers."""
     results = []
-    batch_size = 100
-    for i in range(0, len(tickers), batch_size):
-        batch = tickers[i:i + batch_size]
-        print(f"Processing batch {i//batch_size + 1}/{(len(tickers)-1)//batch_size + 1}...")
+    batch_size = 200
+    batches = [tickers[i:i + batch_size] for i in range(0, len(tickers), batch_size)]
+    num_batches = len(batches)
+
+    for batch_idx, batch in enumerate(batches):
+        print(f"Processing batch {batch_idx + 1}/{num_batches}...")
         try:
             df_batch = yf.download(batch, period=period, interval=interval, progress=False, group_by='ticker')
             if df_batch.empty:
                 continue
-            for ticker in batch:
-                try:
-                    if len(batch) > 1:
-                        if ticker not in df_batch.columns.levels[0]:
-                            continue
-                        df = df_batch[ticker].dropna(how='all')
-                    else:
-                        df = df_batch.dropna(how='all')
-                    if resample_4h and not df.empty:
-                        df = _resample_to_4h(df)
-                    if df.empty or len(df) < min_bars:
-                        continue
-                    df = get_fearzone_condition(df)
-                    df['RSI'] = ta.rsi(df['Close'], length=14)
-                    df['Stoch_K'] = get_stoch_k(df)
-                    if 'FearZone_Con' not in df.columns or df['FearZone_Con'].isna().all():
-                        continue
-                    last_row = df.iloc[-1]
-                    if (bool(last_row['FearZone_Con']) == True and
-                        not pd.isna(last_row['RSI']) and last_row['RSI'] <= 31 and
-                        not pd.isna(last_row['Stoch_K']) and last_row['Stoch_K'] <= 21):
-                        results.append(ticker)
-                        print(f" [Found {step_label}] {ticker} (RSI: {last_row['RSI']:.2f}, StochK: {last_row['Stoch_K']:.2f})")
-                except Exception:
-                    continue
         except Exception as e:
-            print(f"Error in batch {i//batch_size + 1}: {e}")
+            print(f"Error in batch {batch_idx + 1}: {e}")
             continue
+        for ticker in batch:
+            try:
+                if len(batch) > 1:
+                    if ticker not in df_batch.columns.levels[0]:
+                        continue
+                    df = df_batch[ticker].dropna(how='all')
+                else:
+                    df = df_batch.dropna(how='all')
+                if resample_4h and not df.empty:
+                    df = _resample_to_4h(df)
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                if df.empty or len(df) < min_bars:
+                    continue
+                # RSI pre-check: skip expensive FearZone if RSI > 31
+                rsi = ta.rsi(df['Close'], length=14)
+                if rsi.empty or pd.isna(rsi.iloc[-1]) or rsi.iloc[-1] > 31:
+                    continue
+                df = get_fearzone_condition(df)
+                df['RSI'] = rsi
+                df['Stoch_K'] = get_stoch_k(df)
+                if 'FearZone_Con' not in df.columns or df['FearZone_Con'].isna().all():
+                    continue
+                last_row = df.iloc[-1]
+                if (bool(last_row['FearZone_Con']) == True and
+                    not pd.isna(last_row['RSI']) and last_row['RSI'] <= 31 and
+                    not pd.isna(last_row['Stoch_K']) and last_row['Stoch_K'] <= 21):
+                    results.append(ticker)
+                    print(f" [Found {step_label}] {ticker} (RSI: {last_row['RSI']:.2f}, StochK: {last_row['Stoch_K']:.2f})")
+            except Exception:
+                continue
     return results
 
 def screen_stocks(market='US', timeframe='d'):

@@ -186,26 +186,27 @@ def run_screening(market):
 
 # -- Market hours check --
 
-def get_active_market():
-    """Return 'US', 'KR', or None based on current market hours."""
+def get_active_markets():
+    """Return list of active markets ('US', 'KR') based on current market hours."""
     now_et = datetime.now(ZoneInfo("America/New_York"))
     now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+    active = []
 
-    # KR market: Mon-Fri, 09:00 ~ 15:30 KST
+    # KR market: Mon-Fri, 09:00 ~ 15:00 KST
     if now_kst.weekday() < 5:
         kr_start = now_kst.replace(hour=9, minute=0, second=0, microsecond=0)
-        kr_end = now_kst.replace(hour=15, minute=30, second=0, microsecond=0)
+        kr_end = now_kst.replace(hour=15, minute=0, second=0, microsecond=0)
         if kr_start <= now_kst <= kr_end:
-            return "KR"
+            active.append("KR")
 
     # US market: Mon-Fri, 09:30 ~ 16:00 ET
     if now_et.weekday() < 5:
         us_start = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
         us_end = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
         if us_start <= now_et <= us_end:
-            return "US"
+            active.append("US")
 
-    return None
+    return active
 
 
 def seconds_until_next_market():
@@ -245,28 +246,28 @@ def main():
     log.info("StockAlarm server started.")
     send_telegram("<b>[StockAlarm] Server started.</b>")
 
-    last_run_market = None
-    INTERVAL = 15 * 60  # 15 minutes
+    INTERVAL = 30 * 60  # 30 minutes
 
     while True:
-        market = get_active_market()
+        markets = get_active_markets()
 
-        if market is None:
+        if not markets:
             wait = seconds_until_next_market()
             wait_min = int(wait // 60)
             log.info(f"Markets closed. Sleeping {wait_min} min until next open.")
             time.sleep(min(wait, 1800))  # Wake up every 30 min max to re-check
             continue
 
-        log.info(f"[{market}] Market is open. Running screening...")
-        try:
-            cond_d, cond_m = run_screening(market)
-            report = format_report(market, cond_d, cond_m)
-            send_telegram(report)
-            log.info(f"[{market}] Report sent. D={len(cond_d)}, M={len(cond_m)}")
-        except Exception as e:
-            log.error(f"Screening error: {e}")
-            send_telegram(f"<b>[StockAlarm] Error:</b> {e}")
+        for market in markets:
+            log.info(f"[{market}] Market is open. Running screening...")
+            try:
+                cond_d, cond_m = run_screening(market)
+                report = format_report(market, cond_d, cond_m)
+                send_telegram(report)
+                log.info(f"[{market}] Report sent. D={len(cond_d)}, M={len(cond_m)}")
+            except Exception as e:
+                log.error(f"[{market}] Screening error: {e}")
+                send_telegram(f"<b>[StockAlarm] {market} Error:</b> {e}")
 
         log.info(f"Sleeping {INTERVAL // 60} min...")
         time.sleep(INTERVAL)
