@@ -245,7 +245,7 @@ def main():
     log.info("StockAlarm server started.")
     send_telegram("<b>[StockAlarm] Server started.</b>")
 
-    INTERVAL = 30 * 60  # 30 minutes
+    INTERVAL = 15 * 60  # 15 minutes
 
     while True:
         markets = get_active_markets()
