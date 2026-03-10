@@ -38,7 +38,7 @@ def send_telegram(text):
             log.error(f"Telegram send failed: {e}")
 
 
-def format_report(market, cond_d, cond_m):
+def format_report(market, cond_d, cond_m, index_map=None):
     """Format screening results as an HTML Telegram message."""
     now = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M KST")
     lines = [f"<b>[StockAlarm] {market} Screening</b>", f"<i>{now}</i>", ""]
@@ -47,13 +47,36 @@ def format_report(market, cond_d, cond_m):
         lines.append("Condition D: No candidates found.")
         return "\n".join(lines)
 
-    lines.append(f"<b>Condition D ({len(cond_d)}):</b> {', '.join(cond_d)}")
+    # Group by index for display
+    if index_map:
+        grouped_d = {}
+        for t in cond_d:
+            idx = index_map.get(t, "Other")
+            grouped_d.setdefault(idx, []).append(t)
+        lines.append(f"<b>Condition D ({len(cond_d)}):</b>")
+        for idx_name in ["S&P 500", "NDQ 100", "Russell 2000", "Other"]:
+            if idx_name in grouped_d:
+                lines.append(f"  <b>[{idx_name}]</b> {', '.join(grouped_d[idx_name])}")
+    else:
+        lines.append(f"<b>Condition D ({len(cond_d)}):</b> {', '.join(cond_d)}")
     lines.append("")
 
     if cond_m:
-        lines.append(f"<b>Condition M Final ({len(cond_m)}):</b>")
-        for ticker, rsi, stk in cond_m:
-            lines.append(f"  {ticker}: RSI {rsi:.1f} / StochK {stk:.1f}")
+        if index_map:
+            grouped_m = {}
+            for ticker, rsi, stk in cond_m:
+                idx = index_map.get(ticker, "Other")
+                grouped_m.setdefault(idx, []).append((ticker, rsi, stk))
+            lines.append(f"<b>Condition M Final ({len(cond_m)}):</b>")
+            for idx_name in ["S&P 500", "NDQ 100", "Russell 2000", "Other"]:
+                if idx_name in grouped_m:
+                    lines.append(f"  <b>[{idx_name}]</b>")
+                    for ticker, rsi, stk in grouped_m[idx_name]:
+                        lines.append(f"    {ticker}: RSI {rsi:.1f} / StochK {stk:.1f}")
+        else:
+            lines.append(f"<b>Condition M Final ({len(cond_m)}):</b>")
+            for ticker, rsi, stk in cond_m:
+                lines.append(f"  {ticker}: RSI {rsi:.1f} / StochK {stk:.1f}")
     else:
         lines.append("Condition M: No final targets.")
 
@@ -62,12 +85,19 @@ def format_report(market, cond_d, cond_m):
 
 # -- Ticker fetchers (override for US to exclude hardcoded list) --
 
+def _normalize_ticker(t):
+    return str(t).replace(".", "-").strip()
+
+
 def get_tickers_us():
-    """S&P 500 + NASDAQ 100 + Russell 2000 (top 1000)."""
+    """S&P 500 + NASDAQ 100 + Russell 2000 (top 1000). Returns (tickers, index_map)."""
     import pandas as pd
     import io
     headers = {"User-Agent": "Mozilla/5.0"}
-    tickers = []
+
+    sp500_set = set()
+    ndx100_set = set()
+    russell_set = set()
 
     # S&P 500
     try:
@@ -77,9 +107,10 @@ def get_tickers_us():
         )
         tables = pd.read_html(io.StringIO(res.text))
         if tables:
-            sp = tables[0]["Symbol"].tolist()
-            tickers.extend(sp)
-            log.info(f"S&P 500: {len(sp)} tickers")
+            sp = [_normalize_ticker(t) for t in tables[0]["Symbol"].tolist()
+                  if isinstance(t, (str, float)) and str(t) != "nan"]
+            sp500_set = set(sp)
+            log.info(f"S&P 500: {len(sp500_set)} tickers")
     except Exception as e:
         log.warning(f"S&P 500 fetch failed: {e}")
 
@@ -93,9 +124,10 @@ def get_tickers_us():
         for df in tables:
             col = "Ticker" if "Ticker" in df.columns else ("Symbol" if "Symbol" in df.columns else None)
             if col:
-                ndx = df[col].tolist()
-                tickers.extend(ndx)
-                log.info(f"NASDAQ 100: {len(ndx)} tickers")
+                ndx = [_normalize_ticker(t) for t in df[col].tolist()
+                       if isinstance(t, (str, float)) and str(t) != "nan"]
+                ndx100_set = set(ndx)
+                log.info(f"NASDAQ 100: {len(ndx100_set)} tickers")
                 break
     except Exception as e:
         log.warning(f"NASDAQ 100 fetch failed: {e}")
@@ -115,26 +147,33 @@ def get_tickers_us():
             iwm_df = pd.read_csv(io.StringIO(csv_text))
             iwm_df["Ticker"] = iwm_df["Ticker"].astype(str).str.strip().str.strip('"')
             iwm_df = iwm_df[iwm_df["Ticker"].apply(lambda t: t.isalpha() and len(t) <= 5)]
-            iwm_top = iwm_df.head(1000)["Ticker"].tolist()
-            tickers.extend(iwm_top)
-            log.info(f"Russell 2000 (top 1000): {len(iwm_top)} tickers")
+            iwm_top = [_normalize_ticker(t) for t in iwm_df.head(1000)["Ticker"].tolist()]
+            russell_set = set(iwm_top)
+            log.info(f"Russell 2000 (top 1000): {len(russell_set)} tickers")
     except Exception as e:
         log.warning(f"Russell 2000 fetch failed: {e}")
 
-    unique = sorted(set(
-        str(t).replace(".", "-").strip()
-        for t in tickers
-        if isinstance(t, (str, float)) and str(t) != "nan"
-    ))
-    return unique
+    # Build index_map: priority S&P 500 > NASDAQ 100 > Russell 2000
+    all_tickers = sp500_set | ndx100_set | russell_set
+    index_map = {}
+    for t in all_tickers:
+        if t in sp500_set:
+            index_map[t] = "S&P 500"
+        elif t in ndx100_set:
+            index_map[t] = "NDQ 100"
+        else:
+            index_map[t] = "Russell 2000"
+
+    return sorted(all_tickers), index_map
 
 
 # -- Screening runner --
 
 def run_screening(market):
-    """Run the two-step screening and return (cond_d, cond_m_details)."""
+    """Run the two-step screening and return (cond_d, cond_m_details, index_map)."""
+    index_map = None
     if market == "US":
-        tickers = get_tickers_us()
+        tickers, index_map = get_tickers_us()
     else:
         tickers = get_tickers("KR")
 
@@ -144,7 +183,7 @@ def run_screening(market):
     cond_d = _screen_batch(tickers, "2y", "1d", "Condition D", min_bars=100)
 
     if not cond_d:
-        return [], []
+        return [], [], index_map
 
     # Step 2: 15-min intraday
     # Collect detailed results for reporting
@@ -180,7 +219,7 @@ def run_screening(market):
     except Exception as e:
         log.error(f"Step 2 batch error: {e}")
 
-    return cond_d, cond_m
+    return cond_d, cond_m, index_map
 
 
 # -- Market hours check --
@@ -260,8 +299,8 @@ def main():
         for market in markets:
             log.info(f"[{market}] Market is open. Running screening...")
             try:
-                cond_d, cond_m = run_screening(market)
-                report = format_report(market, cond_d, cond_m)
+                cond_d, cond_m, index_map = run_screening(market)
+                report = format_report(market, cond_d, cond_m, index_map)
                 send_telegram(report)
                 log.info(f"[{market}] Report sent. D={len(cond_d)}, M={len(cond_m)}")
             except Exception as e:
